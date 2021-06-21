@@ -107,13 +107,27 @@ VSIZE = model.outputs[0].shape[1] * model.outputs[0].shape[2] * model.outputs[0]
 MSG1("resize to")
 MSG3(f"to {SIZE[0]}x{SIZE[1]} {VSIZE}")
 
-# ------------------------------------------------------------------------ load images
-
-import numpy as np
-np.warnings.filterwarnings("ignore",category=np.VisibleDeprecationWarning)
-  
+# ------------------------------------------------- function to load and resize images
 from imageio import imread
 from skimage.transform import resize
+
+def loadresize(path):
+  #print(f"---> {path}")
+  # image = cv2.imread(path)
+  # image = cv2.resize(image,SIZE)
+  # cv2.imwrite("/tmp/cv2.png",image)
+  try:
+    image = imread(str(path))
+  except:
+    print(f"\nmalformed image: {path}\n")
+    return
+  image = resize(image,SIZE,anti_aliasing=True)
+  return image
+
+# ------------------------------------------------------------------------ load images
+from multiprocessing.pool import ThreadPool
+import numpy as np
+np.warnings.filterwarnings("ignore",category=np.VisibleDeprecationWarning)
 from sklearn.decomposition import PCA
 
 BATCHSIZE1 = 4096 # 1st batch
@@ -125,7 +139,7 @@ if BATCHSIZE1 > len(path): BATCHSIZE1 = len(path)
 if BATCHSIZE  > len(path): BATCHSIZE  = len(path)
 
 MSG1("loading setup")
-MSG3(f"load-resize-nn-pca {1+(len(path)-BATCHSIZE1)/BATCHSIZE:.0f} batches from {len(path)} images")
+MSG3(f"load+resize -> nn -> pca {1+(len(path)-BATCHSIZE1)/BATCHSIZE:.0f} batches from {len(path)} images")
 
 # PCA setup
 PCASIZE = min(BATCHSIZE1,VSIZE)
@@ -140,7 +154,6 @@ MSG1("load")
 i = 0 # image index
 j = 0 # batch index
 ibytes = 0
-rbytes = 0
 vbytes = 0
 vectors = np.empty([0,PCASIZE],dtype=np.float32)
 batchsize = BATCHSIZE1
@@ -148,22 +161,23 @@ while i<len(path):
   i2 = i+batchsize
   if i2>len(path): i2 = len(path) 
 
-  # load
+  # parallel load+resize on all cores using threadpool
   MSGC("l")
-  #images = np.array([imread(str(p)).astype(np.float32) for p in path[i:i2]],dtype=object)
-  images = np.array([imread(str(p)).astype(np.float32) for p in path[i:i2]])
+  images = np.empty([0,SIZE[0],SIZE[1],SIZE[2]],dtype=np.float32)
+  pool = ThreadPool(16)
+  results = []
+  for p in path[i:i2]:
+    results.append(pool.apply_async(loadresize,args=(p,)))
+  pool.close()
+  pool.join()
+  images = np.array([r.get() for r in results]) # assemble the batch-array
   i += len(images)
   ibytes += images.nbytes
 
-  # resize
-  MSGC("\br")
-  resized = np.asarray([resize(image,SIZE,0) for image in images])
-  rbytes += resized.nbytes
-
   # nn transform
   MSGC("\bn")
-  vector = model.predict(resized)
-  vector = vector.reshape(resized.shape[0],-1)
+  vector = model.predict(images)
+  vector = vector.reshape(images.shape[0],-1)
   vbytes += vector.nbytes
 
   # pca
@@ -172,7 +186,7 @@ while i<len(path):
     pca.fit(vector)
   MSGC("\bp")
   vector = pca.transform(vector)
-
+  
   # progress
   ch = "."
   if batch1: ch = "o"
@@ -181,7 +195,7 @@ while i<len(path):
   MSGC(f"\b{ch}")
   
   # append
-#  vectors = tf.concat([vectors,vector],0)
+  # vectors = tf.concat([vectors,vector],0)
   vectors = np.concatenate((vectors,vector),0)
 
   # iterate
@@ -194,10 +208,9 @@ MSG3("")
 
 MSG1("memory consumed")
 MSG2(f"{ibytes/1073741824:.1f}GB images, ")
-MSG2(f"{rbytes/1073741824:.1f}GB resized images, ")
 MSG3(f"{vbytes/1073741824:.1f}GB vectors")
 #MSG3(f"{len(images)} images ({images.nbytes/1073741824:.1f}GB)")
-# MSG3(f"{images.nbytes/1073741824:.1f}GB")
+#MSG3(f"{images.nbytes/1073741824:.1f}GB")
 #MSG3(f"got {len(vector)} vectors {vector[0].shape[0]} long")
 
 IMAGES = len(vectors)
@@ -324,12 +337,32 @@ div.box {
   position: relative; }
 h2 {
   color: white; }
+.bad {
+  position: relative;
+  overflow: hidden; }
+.bad:before, .bad:after {
+  position: absolute;
+  content: '';
+  background: red;
+  display: block;
+  width: 75%;
+  height: 8px;
+  -webkit-transform: rotate(-45deg);
+  transform: rotate(-45deg);
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  margin: auto; }
+.bad:after {
+  -webkit-transform: rotate(45deg);    
+  transform: rotate(45deg); }
 """
 
 HTML="""<!DOCTYPE html>
 <html>
 <head>
-<title>imclust.py</title>
+<title>imclust</title>
 <link rel="preconnect" href="https://fonts.gstatic.com">
 <link href="https://fonts.googleapis.com/css2?family=Roboto+Condensed&display=swap" rel="stylesheet">
 <link href="https://fonts.googleapis.com/css2?family=Roboto+Condensed:wght@700&display=swap" rel="stylesheet">
@@ -344,10 +377,11 @@ HTML="""<!DOCTYPE html>
 </html>
 """
 
-def addimg(path,clas,title):
+def addimg(path,clas,title,bad):
+  b = " bad" if bad else ""
   s = ""
-  s += f'<a href="{path}"><div class="box {clas}">'
-  s += f'<div><img class={clas} src="{path}" title="{title}" height=128px></div>'
+  s += f'<a href="{path}"><div class="box {clas}{b}">'
+  s += f'<div><img class={clas} src="{path}" title="{title}"></div>'
   s += f'</div></a>\n'
   return s
 
