@@ -1,0 +1,7 @@
+# https://github.com/github/linguist/#generated-code
+
+.git*     linguist-vendored
+.gr       linguist-vendored
+UTIL/*    linguist-vendored
+*.md      linguist-documentation
+VERSION   linguist-generated
