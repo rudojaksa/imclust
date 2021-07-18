@@ -1,5 +1,45 @@
 #!/usr/bin/env -S python3 -u # -*- python -*-
-import os,sys,time,re
+import os,sys,time,re,types
+
+# import a silent numpy
+import numpy as np
+np.warnings.filterwarnings("ignore",category=np.VisibleDeprecationWarning)
+
+# available vs. default perception models (to transform input picture into vector of numbers)
+MODELS = ("none","resnet50")
+MODEL = "resnet50"
+
+# available vs. default dimensionality reduction methods
+REDIMS = ("none","pca") # TODO: autoencoders
+REDIM = "pca"
+
+# available vs. default clustering methods
+CLUSTS = ("km","bkm")
+CLUST = "km"
+
+# available vs. default cluster-centers sorting methods
+SORTS = ("none","size","tsp")
+SORT = "tsp"
+
+# TODO: available vs. default intra-cluster sorting methods
+CSORTS = ("none","dist","tsp")
+CSORT = "tsp"
+
+# TODO: available vs. default clustering evaluation methods
+EVALS = ("none","tsp")
+EVAL = "none"
+
+# TODO: available vs. default clusters evaluation methods
+CEVALS = ("none","tsp")
+CEVAL = "none"
+
+# batchsize and dimensionality reduction size
+BATCHSIZE = 1024
+REDIMSIZE = 3072 # target size of vector after reduction
+REDIMPATS = 8192 # number of patterns to train "reductor"
+
+# no. of loading threads
+THREADS = 8
 
 # ------------------------------------------------------------------------------------
 
@@ -9,8 +49,42 @@ def MSG1(str): print(f"{str:>18s}:",end=" ",file=sys.stderr)	# start
 def MSG2(str): print(str,end=" ",file=sys.stderr)		# continue
 def MSGC(str): print(str,end="",file=sys.stderr)		# progressbar character
 def MSG3(str): print(str,file=sys.stderr)			# end
-def MSGE(str): MSG1("error"); MSG3(str); exit()
+def MSG(hdr,str): MSG1(hdr); MSG3(str)				# hdr+string util function
+def MSGE(str): MSG1("error"); MSG3(str); exit()			# error util function
 
+def MSGP(j): # progress-overwrite function, j is progress index
+  ch = "."
+  if (j+1)% 5==0: ch = ","
+  if (j+1)%10==0: ch = ":"
+  MSGC(f"\b{ch}")
+
+# return metric number
+def metric(num):
+  ret = None
+  if num > 107374182400: ret = f"{num/1073741824:.0f}G"
+  elif num > 1073741824: ret = f"{num/1073741824:.1f}G"
+  elif  num > 104857600: ret = f"{num/1048576:.0f}M"
+  elif    num > 1048576: ret = f"{num/1048576:.1f}M"
+  elif     num > 102400: ret = f"{num/1024:.0f}k"
+  elif       num > 1024: ret = f"{num/1024:.1f}k"
+  elif        num > 100: ret = f"{num:.0f}"
+  else:		         ret = f"{num:.1f}"
+  ret = re.sub("\.0([GMk])?$",r"\1",ret)
+  return ret
+
+# return time interval
+def minsec(sec):
+  ret = None
+  if sec > 360000: ret = f"{sec/3600:.0f}hr"
+  elif sec > 3600: ret = f"{sec/3600:.1f}hr"
+  elif   sec > 60: ret = f"{sec/60:.1f}min"
+  else:		   ret = f"{sec:.1f}sec"
+  ret = re.sub("\.0((hr)|(min)|(sec))?$",r"\1",ret)
+  return ret
+
+# return layer size string: WIDTHxHEIGHT*CHANNELS
+def lsz(size): return f"{size[0]}x{size[1]}*{size[2]}"
+  
 # ----------------------------------------------- get directory name from command-line
 
 HELP = f"""
@@ -22,29 +96,48 @@ USAGE
 
 DESCRIPTION
     Imclust does cluster images in the directory, and produces
-    a web visualization.
+    a web visualization (or CSV-file output). Clustering is done
+    in six steps:
+
+       1. loading and resize of images,
+       2. perception - transformation of images into vectors,
+       3. reduction of dimensionality of vectors (optional),
+       4. clustering,
+       5. ordering/sorting of clusters,
+       6. assembling the visualization or the output data-file.
+
+    Caching of perception and reduction outputs can be enabled.
 
 OPTIONS
       -h  This help.
       -v  Verbose.
+      -f  Force recomputing all data, avoid cached.
     -csv  Write csv output instead of html.
  -o PATH  Output file name.
+  -j NUM  Number of threads for loading, dflt. {THREADS}.
+  -cache  Cache computed vectors for every picture (see -vec).
   -c NUM  Requested number of clusters.
   -m NUM  Limit the max number of images to cluster.
-  -b NUM  Batch size.
- -b1 NUM  1st batch size (for PCA fit).
-  -f STR  Clustering function: km,bkm.
  -mt NUM  Number of members threshold for the cluster to be accepted.
  -dt NUM  Absolute distance threshold from the center cluster, for
           the image to be accepted.
 -pt PERC  Percentual threshold.
+  -b NUM  Batch size.
+  -r NUM  Reduce vector dimensionality to NUM, dflt. auto from {REDIMSIZE}.
+ -rp NUM  No. of patterns to train reduction, dflt. auto from {REDIMPATS}.
+ -nn STR  Model name, dflt. {MODEL} (from {", ".join(MODELS)}).
+ -cl STR  Clustering algorithm, dflt. {CLUST} (from {", ".join(CLUSTS)}).
+ -rd STR  Dimensionality reduction, dflt. {REDIM} (from {", ".join(REDIMS)}).
+  -s STR  Sorting of cluster centers, dflt. {SORT} (from {", ".join(SORTS)}).
+-vec STR  Suffix of files with precomputed vectors for every picture,
+          for "dir/f_12.jpg" we expect "dir/f_12.vgg" if STR is "vgg".
 
 CLUSTERING
       km  scikit KMeans
      bkm  scikit MiniBatchKMeans
 
 VERSION
-    imclust 0.1 (c) R.Jaksa 2021
+    imclust 0.2 (c) R.Jaksa 2021
 """
 
 import argparse
@@ -56,11 +149,21 @@ parser.add_argument("-c","--clusters",type=int)
 parser.add_argument("-m","--maximum",type=int)
 parser.add_argument("-dt","--distthr",type=int)
 parser.add_argument("-pt","--percthr",type=int)
-parser.add_argument("-f","--func",type=str,default="km")
 parser.add_argument("-o","--output",type=str)
-parser.add_argument("-b1","--batchsize1",type=int)
+parser.add_argument("-j","--threads",type=int)
+
 parser.add_argument("-b","--batchsize",type=int)
-parser.add_argument("path",type=str,nargs='*')
+parser.add_argument("-r","--redimsize",type=int)
+parser.add_argument("-rp","--redimpats",type=int)
+
+parser.add_argument("-nn","--nn",type=str,default=MODEL)
+parser.add_argument("-cl","--clust",type=str,default=CLUST)
+parser.add_argument("-rd","--redim",type=str,default=REDIM)
+parser.add_argument("-s","--sort",type=str,default=SORT)
+
+parser.add_argument("-vec","--vectors",type=str)
+parser.add_argument("-cache","--cache",action="store_true")
+parser.add_argument("paths",type=str,nargs='*')
 args = parser.parse_args()
 
 if args.help:
@@ -68,150 +171,411 @@ if args.help:
     exit(0)
 
 VERBOSE = 1 if args.verbose else 0
+if args.threads: THREADS = args.threads
 
-funcs = ("km","bkm")
-if not args.func in funcs: MSGE(f"unknown clustering {args.func}")
+if not args.nn in MODELS: MSGE(f"unknown perc. model {args.nn}")
+else: MODEL = args.nn
+if not args.clust in CLUSTS: MSGE(f"unknown clustering {args.clust}")
+else: CLUST = args.clust
+if not args.redim in REDIMS: MSGE(f"unknown dim. reduction {args.redim}")
+else: REDIM = args.redim
+if not args.redim in REDIMS: MSGE(f"unknown sorting {args.sort}")
+else: SORT = args.sort
 
-# ---------------------------------------------------------- get image names from dirs
+# ------------------------------------------------------------------ get list of files
 from glob import glob
 import random
+
 MSG1("scan paths")
+paths = [] # paths to pictures
+poor = [] # wrong/missing paths
+for name in args.paths:
 
-path = []
-for dir in args.path:
-  path += glob(dir+"/**/*.png",recursive=True)
-  path += glob(dir+"/**/*.jpg",recursive=True)
-random.shuffle(path)
-MSG2(f"{len(path)} files")
+  # 1st: from CSV (use the 1st column and expect filenames)
+  if re.search("\.csv$",name):
+    for file in os.popen(f"cut -d ' ' -f 1 {name}").read().rstrip().split("\n"):
+      if file[0] == "#": continue
+      if os.path.exists(file): paths.append(file)
+      else: poor.append(file)
 
-if args.maximum and args.maximum < len(path):
-  path = path[:args.maximum]
-  MSG2(f"(limit to {len(path)})")
+  # 2nd: explicit filenames
+  elif re.search("\.((png)|(jpg))$",name):
+    if os.path.exists(name): paths.append(name)
+    else: poor.append(name)
 
+  # 3rd: recursive directory search
+  elif os.path.isdir(name):
+    paths += glob(name+"/**/*.png",recursive=True)
+    paths += glob(name+"/**/*.jpg",recursive=True)
+
+  else: poor.append(name)
+
+MSG2(f"{len(paths)} pictures")
+
+# limit the number of files to process
+if args.maximum and args.maximum < len(paths):
+  paths = paths[:args.maximum]
+  MSG2(f"(limit to {len(paths)})")
 MSG3("")
-if len(path)<1: MSGE("cannot proceed without files")
 
-#for p in path: print(p)
-# ------------------------------------------------------------------------- load model
-if not VERBOSE: os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-import tensorflow as tf
-MSG1("load model")
+# errors
+if poor:
+  MSGE(f"wrong pathnames: {', '.join(poor)}")
+if len(paths)<1:
+  MSGE("cannot proceed without files")
 
-SIZE = (224,224,3)
-model = tf.keras.applications.resnet50.ResNet50(include_top=False, weights="imagenet", input_shape=SIZE)
-MSG3(f"{model._name} (input {model._feed_input_shapes[0][1]}x{model._feed_input_shapes[0][1]})")
+# remove duplicates and shuffle
+paths = list(set(paths))
+random.shuffle(paths)
 
-SIZE = model._feed_input_shapes[0][1:]
-VSIZE = model.outputs[0].shape[1] * model.outputs[0].shape[2] * model.outputs[0].shape[3]
+#for p in paths: print(p)
+# --------------------------------------------------------------------- batching setup
 
-MSG1("resize to")
-MSG3(f"to {SIZE[0]}x{SIZE[1]} {VSIZE}")
+def  modelname(model): return model._name
+def  inputsize(model): return model._feed_input_shapes[0][1:]
+def outputsize(model): return model.outputs[0].shape[1:]
 
-# ------------------------------------------------- function to load and resize images
+# ------------------------------------------------------------------------------------
+
+# just return the input/output/vector sizes, without model loading
+def modelsize(name):
+  if name == "resnet50": return (224,224,3),(7,7,2048),100352
+  if name == "none": return (128,128,3),(128,128,3),49152
+
+# get sizes from model...
+def realsize(prcpt):
+  if prcpt.name == "none": return modelsize(prcpt.name)
+  osize = outputsize(prcpt.model)
+  return inputsize(prcpt.model),osize,osize[0]*osize[1]*osize[2]
+  
+# load model by name and return "prcpt" structure
+def perception_init(cache,name,isize,osize,vsize):
+  prcpt = types.SimpleNamespace()
+  prcpt.name = name
+  prcpt.isize,prcpt.osize,prcpt.vsize = modelsize(name)
+  
+  if name == "none": return prcpt	# no model for none model
+  if cache.paths0: pass			# needs model for loading
+  elif cache.paths0all: pass		# probably needs for redim
+  else: return prcpt
+
+  # tensorflow models start here
+  MSG1("init perception")
+  if not VERBOSE: os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+  import tensorflow as tf
+
+  if name == "resnet50":
+    prcpt.model = tf.keras.applications.resnet50.ResNet50(include_top=False,weights="imagenet",input_shape=(224,224,3))
+
+  prcpt.name = modelname(prcpt.model)
+  prcpt.isize,prcpt.osize,prcpt.vsize = realsize(prcpt)
+  MSG3(f"{prcpt.name} {lsz(prcpt.isize)} -> {lsz(prcpt.osize)} = {prcpt.vsize}")
+  if isize!=prcpt.isize or osize!=prcpt.osize or vsize!=prcpt.vsize:
+    MSGE("perception size mismatch, was: {lsz(isize)} -> {lsz(osize)} = {vsize}")
+  return prcpt
+
+# ------------------------------------------------------------------------------------
+
+def transform(prcpt,images):
+  vectors = prcpt.model.predict(images)
+  vectors = vectors.reshape(images.shape[0],-1)
+  return vectors
+
+# ------------------------------------------------------------------------------------
+
+isize,osize,vsize = modelsize(MODEL)
+
+if args.batchsize: BATCHSIZE = args.batchsize
+if args.redimsize: REDIMSIZE = args.redimsize
+if args.redimpats: REDIMPATS = args.redimpats
+
+if BATCHSIZE > len(paths): BATCHSIZE = len(paths)
+if REDIMPATS > len(paths): REDIMPATS = len(paths)
+if REDIMSIZE > REDIMPATS: REDIMSIZE = REDIMPATS
+REDIMSIZE = min(REDIMSIZE,vsize) # further reduce REDIMSIZE if vector size is too small
+
+MSG("batch size",f"{BATCHSIZE} (aprox. {len(paths)/BATCHSIZE:.0f} batches)")
+
+# -------------------------------------- cached loading of images till reduced vectors
+import numpy as np
+
+# numpy save float32 raw array
+def saveraw(name,data):
+  arr = np.array(data,"float32")
+  file = open(name,"wb")
+  arr.tofile(file)
+  file.close()
+
+# import struct
+# s = struct.pack('f'*len(floats), *floats)
+# f = open('file','wb')
+# f.write(s)
+# f.close()
+
+# numpy load float32 raw array
+def loadraw(name):
+  data = np.fromfile(name,dtype="float32")
+  return data
+
+# load batch of raw files into vectors, size is size of every vector
+def loadraws(paths,sx):
+  return np.array([loadraw(re.sub("\.[a-z]*$",f".{sx}",p)) for p in paths])
+
+# load batch of raw files into vectors, size is size of every vector
+def saveraws(paths,sx,vectors):
+  i = 0
+  for path in paths:
+    saveraw(re.sub("\.[a-z]*$",f".{sx}",path),vectors[i])
+    i += 1
+
+# ------------------------------------------------------------------------------------
+
+# MSG2 print of cached files
+def MSG2cached(cache):
+  if len(cache.paths2)>0: MSG2(f"{len(cache.paths2)} reduced,")
+  if len(cache.paths1)>0:
+    MSG2(f"{len(cache.paths1)} percept. vectors")
+    if len(cache.paths1all)>len(cache.paths1): MSG2(f"(from {len(cache.paths1all)})")
+  elif len(cache.paths1all)>len(cache.paths1): MSG2(f"{len(cache.paths1all)} available percept. vectors")
+  MSG3(f"and {len(cache.paths0)} pictures not cached")
+
+# scan cached files
+def caching_init(paths,sx1,sx2):
+  cache = types.SimpleNamespace()
+  cache.sx1	  = sx1	# 
+  cache.sx2	  = sx2	# 
+  cache.paths0    = []	# paths to pictures (when no cache is available)
+  cache.paths1    = []	# paths to model cache
+  cache.paths2    = []	# paths to model + reducer
+  cache.paths1all = []	# all available model-cached data
+  cache.paths0all = []	# when no model cache is available
+  MSG1("cache status")
+
+  for p0 in paths:
+    p1 = re.sub("\.[a-z]*$",f".{sx1}",p0)
+    p2 = re.sub("\.[a-z]*$",f".{sx2}",p0)
+    if   os.path.exists(p2):  cache.paths2.append(p0)
+    elif os.path.exists(p1):  cache.paths1.append(p0)
+    else:		      cache.paths0.append(p0)
+    if os.path.exists(p1): cache.paths1all.append(p0)
+    else:		   cache.paths0all.append(p0)
+
+  MSG2cached(cache)
+  return cache
+
+# ------------------------------------------------------------------------------------
+from multiprocessing.pool import ThreadPool
 from imageio import imread
 from skimage.transform import resize
 
-def loadresize(path):
-  #print(f"---> {path}")
+# function to load and resize images
+def lrworker(path,size):
+  # print(f"---> {path}")
   # image = cv2.imread(path)
-  # image = cv2.resize(image,SIZE)
+  # image = cv2.resize(image,size)
   # cv2.imwrite("/tmp/cv2.png",image)
   try:
     image = imread(str(path))
   except:
     print(f"\nmalformed image: {path}\n")
     return
-  image = resize(image,SIZE,anti_aliasing=True)
+  image = resize(image,size,anti_aliasing=True)
   return image
 
-# ------------------------------------------------------------------------ load images
-from multiprocessing.pool import ThreadPool
-import numpy as np
-np.warnings.filterwarnings("ignore",category=np.VisibleDeprecationWarning)
-from sklearn.decomposition import PCA
-
-BATCHSIZE1 = 4096 # 1st batch
-BATCHSIZE  = 1024 # other
-if args.batchsize1: BATCHSIZE1 = args.batchsize1
-if args.batchsize:  BATCHSIZE  = args.batchsize
-
-if BATCHSIZE1 > len(path): BATCHSIZE1 = len(path)
-if BATCHSIZE  > len(path): BATCHSIZE  = len(path)
-
-MSG1("loading setup")
-MSG3(f"load+resize -> nn -> pca {1+(len(path)-BATCHSIZE1)/BATCHSIZE:.0f} batches from {len(path)} images")
-
-# PCA setup
-PCASIZE = min(BATCHSIZE1,VSIZE)
-pca = PCA(n_components=PCASIZE)
-#pca = cuml.PCA(n_components=PCASIZE)
-batch1 = 1 # whether it is the 1st batch
-MSG1("pca")
-MSG3(f"to {PCASIZE} components")
-
-# loading itself
-MSG1("load")
-i = 0 # image index
-j = 0 # batch index
-ibytes = 0
-vbytes = 0
-vectors = np.empty([0,PCASIZE],dtype=np.float32)
-batchsize = BATCHSIZE1
-while i<len(path):
-  i2 = i+batchsize
-  if i2>len(path): i2 = len(path) 
-
-  # parallel load+resize on all cores using threadpool
-  MSGC("l")
-  images = np.empty([0,SIZE[0],SIZE[1],SIZE[2]],dtype=np.float32)
-  pool = ThreadPool(16)
+# load and resize images in a thread pool
+def loadresize(paths,size):
+  images = np.empty([0,size[0],size[1],size[2]],dtype=np.float32)
+  pool = ThreadPool(THREADS)
   results = []
-  for p in path[i:i2]:
-    results.append(pool.apply_async(loadresize,args=(p,)))
+  for path in paths:
+    results.append(pool.apply_async(lrworker,args=(path,size)))
   pool.close()
   pool.join()
   images = np.array([r.get() for r in results]) # assemble the batch-array
-  i += len(images)
-  ibytes += images.nbytes
+  return images
 
-  # nn transform
-  MSGC("\bn")
-  vector = model.predict(images)
-  vector = vector.reshape(images.shape[0],-1)
-  vbytes += vector.nbytes
+# the input loop: load + resize + nn + redim
+def data_load(cache,prcpt,redim):
 
-  # pca
-  if batch1:
-    MSGC("\bP")
-    pca.fit(vector)
-  MSGC("\bp")
-  vector = pca.transform(vector)
+  # data loading setup
+  needmodel = 0
+  MSG1("loading setup")
+  if cache.paths2: MSG2(f"{len(cache.paths2)} reduced: just load,")
+  if cache.paths1: MSG2(f"{len(cache.paths1)} percept.: load -> {redim.name},")
+  if cache.paths0:
+    MSG2(f"{len(cache.paths0)} pictures: load+resize -> {prcpt.name} -> {redim.name},")
+    needmodel = 1
+  MSG3("\b\b ")
+
+  # loading itself
+  MSG1("load"); T1 = vtime()
+  all_vectors = np.empty([0,redim.size],dtype=np.float32)
+  images  = []	# 
+  cached1 = []	# newly-cached list for perception vectors
+  cached2 = []	# newly-cached list for dim-reduced vectors
+  ibytes = 0	# accumulated hypothetical space needed for images
+  j = 0		# batch index
+
+  # 1st: cached already reduced dimensions -> just load
+  i = 0 # image index
+  end = len(cache.paths2)
+  while i < end:
+    i2 = i + BATCHSIZE
+    if i2 > end: i2 = end
+    MSGC("C")
+    vectors = loadraws(cache.paths2[i:i2],cache.sx2)
+    MSGP(j)
+    all_vectors = np.concatenate((all_vectors,vectors),0)
+    i += len(vectors)
+    j += 1
+
+  # 2nd: cached nn vectors -> only reduce dimensionality
+  i = 0
+  end = len(cache.paths1)
+  while i < end:
+    i2 = i + BATCHSIZE
+    if i2 > end: i2 = end
+    MSGC("c")
+    vectors = loadraws(cache.paths1[i:i2],cache.sx1)
+    MSGC("\br")
+    vectors = redim.model.transform(vectors)
+    if args.cache:
+      saveraws(cache.paths1[i:i2],cache.sx2,vectors)
+      cached2 += cache.paths1[i:i2]
+    MSGP(j)
+    all_vectors = np.concatenate((all_vectors,vectors),0)
+    i += len(vectors)
+    j += 1
+
+  # 3rd: raw images -> load, resize, nn infer, reduce dim.
+  i = 0
+  end = len(cache.paths0)
+  while i < end:
+    i2 = i + BATCHSIZE
+    if i2 > end: i2 = end
+    MSGC("l")
+    images = loadresize(cache.paths0[i:i2],prcpt.isize)
+    ibytes += images.nbytes
+    MSGC("\bn")
+    vectors = transform(prcpt,images)
+    if args.cache:
+      saveraws(cache.paths0[i:i2],cache.sx1,vectors)
+      cached1 += cache.paths0[i:i2]
+    MSGC("\br")
+    vectors = redim.model.transform(vectors)
+    if args.cache:
+      saveraws(cache.paths0[i:i2],cache.sx2,vectors)
+      cached2 += cache.paths0[i:i2]
+    MSGP(j)
+    all_vectors = np.concatenate((all_vectors,vectors),0)
+    i += len(vectors)
+    j += 1
+
+  # end
+  T2 = vtime()
+
+  MSG2("")
+  if len(images): MSG2(f"{metric(ibytes)}B of {len(images)} images,")
+  MSG2(f"{metric(all_vectors.nbytes)}B of {len(all_vectors)} vectors")
+  MSG3(f"in {j} batches in {minsec(T2-T1)}")
+
+  if cached1 or cached2:  MSG1("newly cached")
+  if cached1:		  MSG2(f"{len(cached1)} percept. vectors")
+  if cached1 and cached2: MSG2("and")
+  if cached2:		  MSG2(f"{len(cached2)} reduced vectors")
+  if cached1 or cached2:  MSG3("")
+
+  return all_vectors
+from sklearn.decomposition import PCA
+
+def reduction_init(cache,prcpt,REDIM,REDIMSIZE,REDIMPATS):
+  redim = types.SimpleNamespace()
+  redim.name = REDIM
+  redim.size = REDIMSIZE
+  redim.pats = REDIMPATS
+  redim.model = None
+  cached = [] # newly-cached list for perception vectors
+
+  # redim not needed
+  if cache.paths2 and not cache.paths1 and not cache.paths0: return redim
+  # none mode
+  if redim.name == "none": return redim
+
+  # trainable modes
+  MSG(f"{redim.name} setup",f"{prcpt.vsize} -> {redim.size} dimensions (from {redim.pats} samples)")
+
+  # engine init
+  redim.model = PCA(n_components=redim.size)
+  # redim.model = cuml.PCA(n_components=redim.size)
+
+  # loading
+  MSG1(f"{redim.name} train"); T1 = vtime()
+  j = 0 # batch index
+  all_vectors = np.empty([0,prcpt.vsize],dtype=np.float32)
+
+  # 1st: load cached vectors
+  i = 0 # image index
+  end = min(len(cache.paths1all),redim.pats)
+  while i < end:
+    i2 = i + BATCHSIZE
+    if i2 > end: i2 = end
+    MSGC("c")
+    vectors = loadraws(cache.paths1all[i:i2],cache.sx1)
+    MSGP(j)
+    all_vectors = np.concatenate((all_vectors,vectors),0)
+    i += len(vectors)
+    j += 1
   
-  # progress
-  ch = "."
-  if batch1: ch = "o"
-  if (j+1)% 5==0: ch = ","
-  if (j+1)%10==0: ch = ":"
-  MSGC(f"\b{ch}")
-  
-  # append
-  # vectors = tf.concat([vectors,vector],0)
-  vectors = np.concatenate((vectors,vector),0)
+  # 2nd: load raw images
+  i = 0
+  end = min(len(cache.paths0all),redim.pats)
+  while i < end:
+    i2 = i + BATCHSIZE
+    if i2 > end: i2 = end
+    MSGC("l")
+    images = loadresize(cache.paths0all[i:i2],prcpt.isize)
+    MSGC("\bn")
+    vectors = transform(prcpt,images)
+    if args.cache:
+      saveraws(cache.paths0all[i:i2],cache.sx1,vectors)
+      cached += cache.paths0all[i:i2]
+    MSGP(j)
+    all_vectors = np.concatenate((all_vectors,vectors),0)
+    i += len(vectors)
+    j += 1
 
-  # iterate
-  if batch1:
-    batchsize = BATCHSIZE
-    batch1 = 0
-  j += 1
+  # 3rd: train redim
+  mem = all_vectors.nbytes
+  MSGC("R"); T2 = vtime()
+  redim.model.fit(all_vectors)
 
-MSG3("")
+  # end
+  MSGP(j); T3 = vtime()
+  MSG2(f" {metric(mem)}B of vectors,")
+  MSG2(f"{minsec(T2-T1)} loading,")
+  MSG2(f"{minsec(T3-T2)} training time")
+  MSG3("")
 
-MSG1("memory consumed")
-MSG2(f"{ibytes/1073741824:.1f}GB images, ")
-MSG3(f"{vbytes/1073741824:.1f}GB vectors")
-#MSG3(f"{len(images)} images ({images.nbytes/1073741824:.1f}GB)")
-#MSG3(f"{images.nbytes/1073741824:.1f}GB")
-#MSG3(f"got {len(vector)} vectors {vector[0].shape[0]} long")
+  # move newly cached vectors from paths0 to paths1
+  if args.cache and cached:
+    cache.paths0 = list(set(cache.paths0).difference(set(cached)))	# paths0 = paths0 - cached
+    cache.paths1 = list(set(cache.paths1 + cached))			# paths1 = paths1 + cached
+    MSG1("newly cached")
+    MSG2(f"{len(cached)} pepcept. vectors, so we got")
+    MSG2cached(cache)
+
+  return redim
+
+cache =    caching_init(paths,f"{MODEL}",f"{MODEL}{REDIM}{REDIMSIZE}")
+prcpt = perception_init(cache,MODEL,isize,osize,vsize)
+redim =  reduction_init(cache,prcpt,REDIM,REDIMSIZE,REDIMPATS)
+vectors =     data_load(cache,prcpt,redim)
+
+# reorder paths, to have the "paths" in the same as "vectors" from loading
+paths = []
+for path in cache.paths2: paths.append(path)
+for path in cache.paths1: paths.append(path)
+for path in cache.paths0: paths.append(path)
 
 IMAGES = len(vectors)
 
@@ -220,19 +584,19 @@ from sklearn import cluster
 MSG1("clustering")
 
 CLUSTERS = 128
-if len(path)<2048: CLUSTERS = int(len(path)/16)
-if CLUSTERS<2:	   CLUSTERS = 2
-if args.clusters:  CLUSTERS = args.clusters
+if len(paths)<2048: CLUSTERS = int(len(paths)/16)
+if CLUSTERS<2:	    CLUSTERS = 2
+if args.clusters:   CLUSTERS = args.clusters
 
 T0 = vtime()
 
-if args.func == "km":
+if CLUST == "km":
   n_init = 10
   n_init = 2 if IMAGES>8000 else n_init
   knn = cluster.KMeans(n_clusters=CLUSTERS,verbose=VERBOSE,n_init=n_init)
   MSG2(f"scikit KMeans {CLUSTERS} clusters in {n_init} attempts")
 
-if args.func == "bkm":
+if CLUST == "bkm":
   n_init = 2
   n_init = 10 if CLUSTERS<2001 else n_init
   n_init = 100 if CLUSTERS<101 else n_init
@@ -307,21 +671,43 @@ if args.percthr:
   MSG1("perc threshold")
   MSG3(f"{percthr} images below {args.percthr}%")
 
-# ------------------------------------------------- sort clusters according their size
+# ---------------------------------------------------------------------- sort clusters
 
 # cindex = cluster indexes as sorted according to the number of elements
-elements = [len(x) for x in cluster]
-indexes  = list(range(CLUSTERS))
-cindex = [x for _,x in sorted(zip(elements,indexes),reverse=True)]
-# for i in range(CLUSTERS): print(f"{cindex[i]}: {len(ordered[cindex[i]])}")
-  
+cindex = list(range(CLUSTERS))
+
+# sort clusters according their size
+if SORT == "size":
+  elements = [len(x) for x in cluster]
+  indexes  = list(range(CLUSTERS))
+  cindex = [x for _,x in sorted(zip(elements,indexes),reverse=True)]
+
+# sort clusters by tsp
+if SORT == "tsp":
+  from sklearn.metrics import pairwise_distances
+  from python_tsp.distances import euclidean_distance_matrix
+  from python_tsp.exact import solve_tsp_dynamic_programming
+  from python_tsp.heuristics import solve_tsp_local_search, solve_tsp_simulated_annealing
+  TSP = []
+  TSP.append([]) 
+  vectors2 = []
+  for j in range(CLUSTERS): vectors2.append(vectors[ordered[j][0]])
+  mdist = euclidean_distance_matrix(vectors2)
+  permutation,distance = solve_tsp_simulated_annealing(mdist) 
+  cindex = permutation
+
+# TODO: listing only if requested
+if 0:
+  print("  i: ID  N")
+  for j in range(CLUSTERS): print(f"{j+1:3}: {cindex[j]:<3} {elements[cindex[j]]:<3}")
+
 # ------------------------------------------------ copy images according their cluster
 
 # import shutil
 # for i in range(IMAGES):
 #   if not os.path.exists(f"output/cluster{cluster[i]}"): os.makedirs(f"output/cluster{cluster[i]}")
-#   print(f"cp {path[i]} output/cluster{cluster[i]}")
-#   shutil.copy2(f"{path[i]}",f"output/cluster{cluster[i]}")
+#   print(f"cp {paths[i]} output/cluster{cluster[i]}")
+#   shutil.copy2(f"{paths[i]}",f"output/cluster{cluster[i]}")
 
 # ------------------------------------------------------------ make html or csv output
 # from web import *
@@ -393,9 +779,9 @@ for jj in range(CLUSTERS):		# j = cluster index as from kmeans
     k = ordered[j][i]			# k = image_index
     bad = 1 if i>=above[j] else 0;
     if args.csv: # csv output
-      section[j] += f"{path[k]} {jj+1} {dist[k]:.1f} {pdist[k]:.1f} {bad}\n"
+      section[j] += f"{paths[k]} {jj+1} {dist[k]:.1f} {pdist[k]:.1f} {bad}\n"
     else: # html output
-      section[j] += addimg(f"{path[k]}",f"cluster{jj+1}",f"{pdist[k]:.0f}% {dist[k]:.0f}cm",bad)
+      section[j] += addimg(f"{paths[k]}",f"cluster{jj+1}",f"{pdist[k]:.0f}% {dist[k]:.0f}cm",bad)
 
 # output filename
 output = "clust"

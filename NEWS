@@ -1,0 +1,5 @@
+0.2 - added vectors caching
+    - added clusters ordering by TSP
+0.1  (based on the imclust.py demo)
+    - added multithread load-resize to save memory
+    - added clusters ordering by size
