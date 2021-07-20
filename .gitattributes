@@ -4,5 +4,4 @@
 .gr       linguist-vendored
 UTIL/*    linguist-vendored
 *.md      linguist-documentation
-VERSION   linguist-generated
 imclust   linguist-generated

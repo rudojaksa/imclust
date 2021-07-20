@@ -1,9 +1,21 @@
 
-to the webpage add into every clustor in clusters overview:
+CACHING
 
- * select button -> to generate export list to copypaste to utils...
+ * caching of clustered csv (PRIORITY)
+ * automatic names for csv: resnet50-pca512-km128-tsp.csv (PRIORITY)
 
-into every image in cluster view:
+VISUALIZATION
 
- * the last button -> to mark (and export) tail of images to be recycled
+ * remove html output, instead add impage and wrapper script for imclust->impage
+ * add select button into every cluster in overview, to generate "copypaste" export list
+ * add the "last" button into every image in cluster view, to mark the tail of images to be recycled
+
+PARALLELIZATION
+
+ * the process needs to be separated into independent tools for perception,redim,etc. (BIG)
+ * these have to be wrapped into parallelizing perl script!
+
+EVAL
+
+ * histogram of clusters sizes
 

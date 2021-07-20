@@ -34,7 +34,7 @@ CEVALS = ("none","tsp")
 CEVAL = "none"
 
 # batchsize and dimensionality reduction size
-BATCHSIZE = 1024
+BATCHSIZE = 2048
 REDIMSIZE = 3072 # target size of vector after reduction
 REDIMPATS = 8192 # number of patterns to train "reductor"
 
@@ -86,6 +86,7 @@ def minsec(sec):
 def lsz(size): return f"{size[0]}x{size[1]}*{size[2]}"
   
 # ----------------------------------------------- get directory name from command-line
+# include "VERSION.py"
 
 HELP = f"""
 NAME
@@ -131,13 +132,15 @@ OPTIONS
   -s STR  Sorting of cluster centers, dflt. {SORT} (from {", ".join(SORTS)}).
 -vec STR  Suffix of files with precomputed vectors for every picture,
           for "dir/f_12.jpg" we expect "dir/f_12.vgg" if STR is "vgg".
+          Comma separated list of suffixes is allowed, to concatenate
+          several vectors into single input for clustering.
 
 CLUSTERING
       km  scikit KMeans
      bkm  scikit MiniBatchKMeans
 
 VERSION
-    imclust 0.2 (c) R.Jaksa 2021
+    imclust {VERSION} (c) R.Jaksa 2021
 """
 
 import argparse
@@ -158,8 +161,8 @@ parser.add_argument("-rp","--redimpats",type=int)
 
 parser.add_argument("-nn","--nn",type=str,default=MODEL)
 parser.add_argument("-cl","--clust",type=str,default=CLUST)
-parser.add_argument("-rd","--redim",type=str,default=REDIM)
 parser.add_argument("-s","--sort",type=str,default=SORT)
+parser.add_argument("-rd","--redim",type=str)
 
 parser.add_argument("-vec","--vectors",type=str)
 parser.add_argument("-cache","--cache",action="store_true")
@@ -175,11 +178,16 @@ if args.threads: THREADS = args.threads
 
 if not args.nn in MODELS: MSGE(f"unknown perc. model {args.nn}")
 else: MODEL = args.nn
+
 if not args.clust in CLUSTS: MSGE(f"unknown clustering {args.clust}")
 else: CLUST = args.clust
-if not args.redim in REDIMS: MSGE(f"unknown dim. reduction {args.redim}")
+
+if not args.redim and args.vectors: REDIM = "none"
+if args.redim == None: pass
+elif not args.redim in REDIMS: MSGE(f"unknown dim. reduction {args.redim}")
 else: REDIM = args.redim
-if not args.redim in REDIMS: MSGE(f"unknown sorting {args.sort}")
+
+if not args.sort in SORTS: MSGE(f"unknown sorting {args.sort}")
 else: SORT = args.sort
 
 # ------------------------------------------------------------------ get list of files
@@ -241,7 +249,6 @@ if args.redimpats: REDIMPATS = args.redimpats
 if BATCHSIZE > len(paths): BATCHSIZE = len(paths)
 if REDIMPATS > len(paths): REDIMPATS = len(paths)
 if REDIMSIZE > REDIMPATS: REDIMSIZE = REDIMPATS
-REDIMSIZE = min(REDIMSIZE,vsize) # further reduce REDIMSIZE if vector size is too small
 
 MSG("batch size",f"{BATCHSIZE} (aprox. {len(paths)/BATCHSIZE:.0f} batches)")
 
@@ -250,7 +257,14 @@ MSG("batch size",f"{BATCHSIZE} (aprox. {len(paths)/BATCHSIZE:.0f} batches)")
 # include "reduction.py"
 # include "loading.py"
 
-cache =    caching_init(paths,f"{MODEL}",f"{MODEL}{REDIM}{REDIMSIZE}")
+if args.vectors:
+  cache,vsize = caching_prec(paths,args.vectors,REDIM,REDIMSIZE)
+  MODEL = "none"
+else:
+  cache = caching_init(paths,MODEL,REDIM,REDIMSIZE)
+
+REDIMSIZE = min(REDIMSIZE,vsize) # further reduce REDIMSIZE if vector size is too small
+  
 prcpt = perception_init(cache,MODEL,isize,osize,vsize)
 redim =  reduction_init(cache,prcpt,REDIM,REDIMSIZE,REDIMPATS)
 vectors =     data_load(cache,prcpt,redim)
@@ -289,7 +303,7 @@ if CLUST == "bkm":
 
 dists = knn.fit_transform(vectors) # distances to all cluster centers
 idx = knn.predict(vectors)	  # indexes of corresponding clusters
-MSG3(f"in {vtime()-T0:.1f}sec")
+MSG3(f"in {minsec(vtime()-T0)}")
 
 # distances to the closest cluster
 dist = [np.inf] * IMAGES
@@ -375,9 +389,21 @@ if SORT == "tsp":
   TSP = []
   TSP.append([]) 
   vectors2 = []
-  for j in range(CLUSTERS): vectors2.append(vectors[ordered[j][0]])
+  #print(f"vectors:{len(vectors)}, ordered:{len(ordered)} clusters{CLUSTERS}")
+  for j in range(CLUSTERS):
+    #print(f"{j}-{ordered[j][0]}",end=" ")
+    #print(f"{j}",end=" ")
+    vectors2.append(vectors[ordered[j][0]])
+  #print("")
+
+  MSG1("distance matrix"); T1=vtime()
   mdist = euclidean_distance_matrix(vectors2)
+  MSG3(f"{len(vectors2)}x{len(vectors2)} in {minsec(vtime()-T1)}")
+
+  MSG1(f"{SORT}"); T1=vtime()
   permutation,distance = solve_tsp_simulated_annealing(mdist) 
+  MSG3(f"{minsec(vtime()-T1)}")
+
   cindex = permutation
 
 # TODO: listing only if requested

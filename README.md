@@ -41,6 +41,8 @@ Caching of perception and reduction outputs can be enabled.
       -s STR  Sorting of cluster centers, dflt. tsp (from none, size, tsp).
     -vec STR  Suffix of files with precomputed vectors for every picture,
               for "dir/f_12.jpg" we expect "dir/f_12.vgg" if STR is "vgg".
+              Comma separated list of suffixes is allowed, to concatenate
+              several vectors into single input for clustering.
 
 ### CLUSTERING
           km  scikit KMeans

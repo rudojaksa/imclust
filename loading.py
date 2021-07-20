@@ -6,10 +6,10 @@ def data_load(cache,prcpt,redim):
   # data loading setup
   needmodel = 0
   MSG1("loading setup")
-  if cache.paths2: MSG2(f"{len(cache.paths2)} reduced: just load,")
-  if cache.paths1: MSG2(f"{len(cache.paths1)} percept.: load -> {redim.name},")
+  if cache.paths2: MSG2(f"{len(cache.paths2)} reduced vectors: just load,")
+  if cache.paths1: MSG2(f"{len(cache.paths1)} percepts: load->{redim.name},")
   if cache.paths0:
-    MSG2(f"{len(cache.paths0)} pictures: load+resize -> {prcpt.name} -> {redim.name},")
+    MSG2(f"{len(cache.paths0)} pictures: load+resize->{prcpt.name}->{redim.name},")
     needmodel = 1
   MSG3("\b\b ")
 
@@ -21,7 +21,7 @@ def data_load(cache,prcpt,redim):
   cached2 = []	# newly-cached list for dim-reduced vectors
   ibytes = 0	# accumulated hypothetical space needed for images
   j = 0		# batch index
-
+  
   # 1st: cached already reduced dimensions -> just load
   i = 0 # image index
   end = len(cache.paths2)
@@ -42,9 +42,9 @@ def data_load(cache,prcpt,redim):
     i2 = i + BATCHSIZE
     if i2 > end: i2 = end
     MSGC("c")
-    vectors = loadraws(cache.paths1[i:i2],cache.sx1)
+    vectors = loadraws(cache.paths1[i:i2],cache.sx1s)
     MSGC("\br")
-    vectors = redim.model.transform(vectors)
+    vectors = reduce(redim,vectors)
     if args.cache:
       saveraws(cache.paths1[i:i2],cache.sx2,vectors)
       cached2 += cache.paths1[i:i2]
@@ -63,12 +63,12 @@ def data_load(cache,prcpt,redim):
     images = loadresize(cache.paths0[i:i2],prcpt.isize)
     ibytes += images.nbytes
     MSGC("\bn")
-    vectors = transform(prcpt,images)
+    vectors = perceive(prcpt,images)
     if args.cache:
       saveraws(cache.paths0[i:i2],cache.sx1,vectors)
       cached1 += cache.paths0[i:i2]
     MSGC("\br")
-    vectors = redim.model.transform(vectors)
+    vectors = reduce(redim,vectors)
     if args.cache:
       saveraws(cache.paths0[i:i2],cache.sx2,vectors)
       cached2 += cache.paths0[i:i2]

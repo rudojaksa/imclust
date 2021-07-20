@@ -20,8 +20,12 @@ def realsize(prcpt):
 def perception_init(cache,name,isize,osize,vsize):
   prcpt = types.SimpleNamespace()
   prcpt.name = name
-  prcpt.isize,prcpt.osize,prcpt.vsize = modelsize(name)
-  
+
+  if name == "none":
+    prcpt.vsize = vsize
+  else:
+    prcpt.isize,prcpt.osize,prcpt.vsize = modelsize(name)
+
   if name == "none": return prcpt	# no model for none model
   if cache.paths0: pass			# needs model for loading
   elif cache.paths0all: pass		# probably needs for redim
@@ -44,7 +48,7 @@ def perception_init(cache,name,isize,osize,vsize):
 
 # ------------------------------------------------------------------------------------
 
-def transform(prcpt,images):
+def perceive(prcpt,images):
   vectors = prcpt.model.predict(images)
   vectors = vectors.reshape(images.shape[0],-1)
   return vectors

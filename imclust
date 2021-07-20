@@ -34,7 +34,7 @@ CEVALS = ("none","tsp")
 CEVAL = "none"
 
 # batchsize and dimensionality reduction size
-BATCHSIZE = 1024
+BATCHSIZE = 2048
 REDIMSIZE = 3072 # target size of vector after reduction
 REDIMPATS = 8192 # number of patterns to train "reductor"
 
@@ -86,6 +86,8 @@ def minsec(sec):
 def lsz(size): return f"{size[0]}x{size[1]}*{size[2]}"
   
 # ----------------------------------------------- get directory name from command-line
+PACKAGE="imclust"
+VERSION="0.2"
 
 HELP = f"""
 NAME
@@ -131,13 +133,15 @@ OPTIONS
   -s STR  Sorting of cluster centers, dflt. {SORT} (from {", ".join(SORTS)}).
 -vec STR  Suffix of files with precomputed vectors for every picture,
           for "dir/f_12.jpg" we expect "dir/f_12.vgg" if STR is "vgg".
+          Comma separated list of suffixes is allowed, to concatenate
+          several vectors into single input for clustering.
 
 CLUSTERING
       km  scikit KMeans
      bkm  scikit MiniBatchKMeans
 
 VERSION
-    imclust 0.2 (c) R.Jaksa 2021
+    imclust {VERSION} (c) R.Jaksa 2021
 """
 
 import argparse
@@ -158,8 +162,8 @@ parser.add_argument("-rp","--redimpats",type=int)
 
 parser.add_argument("-nn","--nn",type=str,default=MODEL)
 parser.add_argument("-cl","--clust",type=str,default=CLUST)
-parser.add_argument("-rd","--redim",type=str,default=REDIM)
 parser.add_argument("-s","--sort",type=str,default=SORT)
+parser.add_argument("-rd","--redim",type=str)
 
 parser.add_argument("-vec","--vectors",type=str)
 parser.add_argument("-cache","--cache",action="store_true")
@@ -175,11 +179,16 @@ if args.threads: THREADS = args.threads
 
 if not args.nn in MODELS: MSGE(f"unknown perc. model {args.nn}")
 else: MODEL = args.nn
+
 if not args.clust in CLUSTS: MSGE(f"unknown clustering {args.clust}")
 else: CLUST = args.clust
-if not args.redim in REDIMS: MSGE(f"unknown dim. reduction {args.redim}")
+
+if not args.redim and args.vectors: REDIM = "none"
+if args.redim == None: pass
+elif not args.redim in REDIMS: MSGE(f"unknown dim. reduction {args.redim}")
 else: REDIM = args.redim
-if not args.redim in REDIMS: MSGE(f"unknown sorting {args.sort}")
+
+if not args.sort in SORTS: MSGE(f"unknown sorting {args.sort}")
 else: SORT = args.sort
 
 # ------------------------------------------------------------------ get list of files
@@ -252,8 +261,12 @@ def realsize(prcpt):
 def perception_init(cache,name,isize,osize,vsize):
   prcpt = types.SimpleNamespace()
   prcpt.name = name
-  prcpt.isize,prcpt.osize,prcpt.vsize = modelsize(name)
-  
+
+  if name == "none":
+    prcpt.vsize = vsize
+  else:
+    prcpt.isize,prcpt.osize,prcpt.vsize = modelsize(name)
+
   if name == "none": return prcpt	# no model for none model
   if cache.paths0: pass			# needs model for loading
   elif cache.paths0all: pass		# probably needs for redim
@@ -276,7 +289,7 @@ def perception_init(cache,name,isize,osize,vsize):
 
 # ------------------------------------------------------------------------------------
 
-def transform(prcpt,images):
+def perceive(prcpt,images):
   vectors = prcpt.model.predict(images)
   vectors = vectors.reshape(images.shape[0],-1)
   return vectors
@@ -292,7 +305,6 @@ if args.redimpats: REDIMPATS = args.redimpats
 if BATCHSIZE > len(paths): BATCHSIZE = len(paths)
 if REDIMPATS > len(paths): REDIMPATS = len(paths)
 if REDIMSIZE > REDIMPATS: REDIMSIZE = REDIMPATS
-REDIMSIZE = min(REDIMSIZE,vsize) # further reduce REDIMSIZE if vector size is too small
 
 MSG("batch size",f"{BATCHSIZE} (aprox. {len(paths)/BATCHSIZE:.0f} batches)")
 
@@ -306,20 +318,13 @@ def saveraw(name,data):
   arr.tofile(file)
   file.close()
 
-# import struct
-# s = struct.pack('f'*len(floats), *floats)
-# f = open('file','wb')
-# f.write(s)
-# f.close()
-
-# numpy load float32 raw array
-def loadraw(name):
-  data = np.fromfile(name,dtype="float32")
-  return data
+# numpy load float32 raw array, as a concatenation of vectors from multiple files
+def loadraw(base,sx):
+  return np.concatenate([np.fromfile(re.sub("\.[a-z]*$",f".{s}",base),dtype="float32") for s in sx.split(",")])
 
 # load batch of raw files into vectors, size is size of every vector
 def loadraws(paths,sx):
-  return np.array([loadraw(re.sub("\.[a-z]*$",f".{sx}",p)) for p in paths])
+  return np.array([loadraw(p,sx) for p in paths])
 
 # load batch of raw files into vectors, size is size of every vector
 def saveraws(paths,sx,vectors):
@@ -332,36 +337,107 @@ def saveraws(paths,sx,vectors):
 
 # MSG2 print of cached files
 def MSG2cached(cache):
-  if len(cache.paths2)>0: MSG2(f"{len(cache.paths2)} reduced,")
-  if len(cache.paths1)>0:
-    MSG2(f"{len(cache.paths1)} percept. vectors")
-    if len(cache.paths1all)>len(cache.paths1): MSG2(f"(from {len(cache.paths1all)})")
-  elif len(cache.paths1all)>len(cache.paths1): MSG2(f"{len(cache.paths1all)} available percept. vectors")
-  MSG3(f"and {len(cache.paths0)} pictures not cached")
+  l1  = len(cache.paths1)
+  l2  = len(cache.paths2)
+  l1a = len(cache.paths1all)
+  if l2: MSG2(f"{l2} reduced,")
+  if l1:
+    MSG2(f"{l1} percepts")
+    if l1a>l1: MSG2(f"(from {l1a})")
+  elif l1a>l1: MSG2(f"{l1a} available percepts")
+  if l1 or l2 or l1a>l1: MSG2("and")
+  MSG3(f"{len(cache.paths0)} pictures not cached")
 
 # scan cached files
-def caching_init(paths,sx1,sx2):
+def caching_init(paths,model,redim,redimsize):
+  if redim == "none": redimsize = ""
   cache = types.SimpleNamespace()
-  cache.sx1	  = sx1	# 
-  cache.sx2	  = sx2	# 
+  cache.sx1	  = f"{model}" # actual suffixe for perception cached files
+  cache.sx2	  = f"{model}-{redim}{redimsize}" # perception+redim
+  cache.sx1s	  = cache.sx1
   cache.paths0    = []	# paths to pictures (when no cache is available)
   cache.paths1    = []	# paths to model cache
   cache.paths2    = []	# paths to model + reducer
   cache.paths1all = []	# all available model-cached data
   cache.paths0all = []	# when no model cache is available
+
+  MSG1("cache files")
+  if redim == "none": MSG3(f"{cache.sx1} cache suffixes")
+  else: MSG3(f"{cache.sx1} and {cache.sx2} cache suffixes")
+
   MSG1("cache status")
 
-  for p0 in paths:
-    p1 = re.sub("\.[a-z]*$",f".{sx1}",p0)
-    p2 = re.sub("\.[a-z]*$",f".{sx2}",p0)
-    if   os.path.exists(p2):  cache.paths2.append(p0)
-    elif os.path.exists(p1):  cache.paths1.append(p0)
-    else:		      cache.paths0.append(p0)
-    if os.path.exists(p1): cache.paths1all.append(p0)
-    else:		   cache.paths0all.append(p0)
+  if redim == "none":
+    for p0 in paths:
+      p1 = re.sub("\.[a-z]*$",f".{cache.sx1}",p0)
+      if os.path.exists(p1):
+        cache.paths1.append(p0)
+        cache.paths1all.append(p0)
+      else:
+        cache.paths0.append(p0)
+        cache.paths0all.append(p0)
+  else:
+    for p0 in paths:
+      p1 = re.sub("\.[a-z]*$",f".{cache.sx1}",p0)
+      p2 = re.sub("\.[a-z]*$",f".{cache.sx2}",p0)
+      if   os.path.exists(p2):	cache.paths2.append(p0)
+      elif os.path.exists(p1):	cache.paths1.append(p0)
+      else:			cache.paths0.append(p0)
+      if os.path.exists(p1):	cache.paths1all.append(p0)
+      else:			cache.paths0all.append(p0)
 
   MSG2cached(cache)
   return cache
+
+# input vectors from precomputed files by suffix
+def caching_prec(paths,sx1s,redim,redimsize):
+  if redim == "none": redimsize = ""
+  cache = types.SimpleNamespace()
+  sx1a = sx1s.split(",")			# array of (input) suffixes
+  cache.sx1s = sx1s				# save orig string for loader
+  cache.sx1 = re.sub(",","",sx1s)		# actual (output) file suffix
+  cache.sx2 = f"{cache.sx1}-{redim}{redimsize}"	# inputs+redim
+  cache.paths0    = []	# paths to pictures (when no cache is available)
+  cache.paths1    = []	# paths to model cache
+  cache.paths2    = []	# paths to model + reducer
+  cache.paths1all = []	# all available model-cached data
+  cache.paths0all = []	# when no model cache is available
+  sizes = []		# list of sizes strings
+  size = 0		# accumulated total size
+
+  MSG("cache files",f"{' '.join(sx1a)} cache suffixes")
+  MSG1("cache status")
+  
+  for p0 in paths:
+
+    # for EVERY suffix, the file must exist
+    allok = 1
+    for sx in sx1a:
+      p = re.sub("\.[a-z]*$",f".{sx}",p0)
+      if not os.path.exists(p): allok = 0
+    if not allok: continue
+
+    # remember the image path
+    cache.paths1.append(p0)
+    cache.paths1all.append(p0)
+
+    # get the size from 1st files
+    if not size:
+      for sx in sx1a:
+        p = re.sub("\.[a-z]*$",f".{sx}",p0)
+        sz = int(os.path.getsize(p)/4) # fro float 32
+        size += sz
+        sizes.append(str(sz))
+
+  # fix the suffix
+  if redim != "none" and vsize < redimsize:
+    cache.sx2 = f"{cache.sx1}-{redim}{vsize}"
+
+  MSG2cached(cache)
+  MSG1("vectors size")
+  if len(sizes)>1: MSG2(" + ".join(sizes) + " =")
+  MSG3(f"{size:.0f}")
+  return cache,size
 
 # ------------------------------------------------------------------------------------
 from multiprocessing.pool import ThreadPool
@@ -400,10 +476,10 @@ def data_load(cache,prcpt,redim):
   # data loading setup
   needmodel = 0
   MSG1("loading setup")
-  if cache.paths2: MSG2(f"{len(cache.paths2)} reduced: just load,")
-  if cache.paths1: MSG2(f"{len(cache.paths1)} percept.: load -> {redim.name},")
+  if cache.paths2: MSG2(f"{len(cache.paths2)} reduced vectors: just load,")
+  if cache.paths1: MSG2(f"{len(cache.paths1)} percepts: load->{redim.name},")
   if cache.paths0:
-    MSG2(f"{len(cache.paths0)} pictures: load+resize -> {prcpt.name} -> {redim.name},")
+    MSG2(f"{len(cache.paths0)} pictures: load+resize->{prcpt.name}->{redim.name},")
     needmodel = 1
   MSG3("\b\b ")
 
@@ -415,7 +491,7 @@ def data_load(cache,prcpt,redim):
   cached2 = []	# newly-cached list for dim-reduced vectors
   ibytes = 0	# accumulated hypothetical space needed for images
   j = 0		# batch index
-
+  
   # 1st: cached already reduced dimensions -> just load
   i = 0 # image index
   end = len(cache.paths2)
@@ -436,9 +512,9 @@ def data_load(cache,prcpt,redim):
     i2 = i + BATCHSIZE
     if i2 > end: i2 = end
     MSGC("c")
-    vectors = loadraws(cache.paths1[i:i2],cache.sx1)
+    vectors = loadraws(cache.paths1[i:i2],cache.sx1s)
     MSGC("\br")
-    vectors = redim.model.transform(vectors)
+    vectors = reduce(redim,vectors)
     if args.cache:
       saveraws(cache.paths1[i:i2],cache.sx2,vectors)
       cached2 += cache.paths1[i:i2]
@@ -457,12 +533,12 @@ def data_load(cache,prcpt,redim):
     images = loadresize(cache.paths0[i:i2],prcpt.isize)
     ibytes += images.nbytes
     MSGC("\bn")
-    vectors = transform(prcpt,images)
+    vectors = perceive(prcpt,images)
     if args.cache:
       saveraws(cache.paths0[i:i2],cache.sx1,vectors)
       cached1 += cache.paths0[i:i2]
     MSGC("\br")
-    vectors = redim.model.transform(vectors)
+    vectors = reduce(redim,vectors)
     if args.cache:
       saveraws(cache.paths0[i:i2],cache.sx2,vectors)
       cached2 += cache.paths0[i:i2]
@@ -496,9 +572,13 @@ def reduction_init(cache,prcpt,REDIM,REDIMSIZE,REDIMPATS):
   redim.model = None
   cached = [] # newly-cached list for perception vectors
 
+  # corrections for the none mode
+  if redim.name == "none":
+    redim.size = prcpt.vsize
+    redim.pats = 0
+  
   # redim not needed
   if cache.paths2 and not cache.paths1 and not cache.paths0: return redim
-  # none mode
   if redim.name == "none": return redim
 
   # trainable modes
@@ -520,7 +600,7 @@ def reduction_init(cache,prcpt,REDIM,REDIMSIZE,REDIMPATS):
     i2 = i + BATCHSIZE
     if i2 > end: i2 = end
     MSGC("c")
-    vectors = loadraws(cache.paths1all[i:i2],cache.sx1)
+    vectors = loadraws(cache.paths1all[i:i2],cache.sx1s)
     MSGP(j)
     all_vectors = np.concatenate((all_vectors,vectors),0)
     i += len(vectors)
@@ -535,7 +615,7 @@ def reduction_init(cache,prcpt,REDIM,REDIMSIZE,REDIMPATS):
     MSGC("l")
     images = loadresize(cache.paths0all[i:i2],prcpt.isize)
     MSGC("\bn")
-    vectors = transform(prcpt,images)
+    vectors = perceive(prcpt,images)
     if args.cache:
       saveraws(cache.paths0all[i:i2],cache.sx1,vectors)
       cached += cache.paths0all[i:i2]
@@ -566,7 +646,29 @@ def reduction_init(cache,prcpt,REDIM,REDIMSIZE,REDIMPATS):
 
   return redim
 
-cache =    caching_init(paths,f"{MODEL}",f"{MODEL}{REDIM}{REDIMSIZE}")
+# ------------------------------------------------------------------------------------
+
+def reduce(redim,vectors):
+
+  if redim.name == "none":
+    reduced = vectors
+    #reduced = vectors.reshape(redim.size,-1)
+
+  else:
+    reduced = redim.model.transform(vectors)
+
+  return reduced
+
+# ------------------------------------------------------------------------------------
+
+if args.vectors:
+  cache,vsize = caching_prec(paths,args.vectors,REDIM,REDIMSIZE)
+  MODEL = "none"
+else:
+  cache = caching_init(paths,MODEL,REDIM,REDIMSIZE)
+
+REDIMSIZE = min(REDIMSIZE,vsize) # further reduce REDIMSIZE if vector size is too small
+  
 prcpt = perception_init(cache,MODEL,isize,osize,vsize)
 redim =  reduction_init(cache,prcpt,REDIM,REDIMSIZE,REDIMPATS)
 vectors =     data_load(cache,prcpt,redim)
@@ -605,7 +707,7 @@ if CLUST == "bkm":
 
 dists = knn.fit_transform(vectors) # distances to all cluster centers
 idx = knn.predict(vectors)	  # indexes of corresponding clusters
-MSG3(f"in {vtime()-T0:.1f}sec")
+MSG3(f"in {minsec(vtime()-T0)}")
 
 # distances to the closest cluster
 dist = [np.inf] * IMAGES
@@ -691,9 +793,21 @@ if SORT == "tsp":
   TSP = []
   TSP.append([]) 
   vectors2 = []
-  for j in range(CLUSTERS): vectors2.append(vectors[ordered[j][0]])
+  #print(f"vectors:{len(vectors)}, ordered:{len(ordered)} clusters{CLUSTERS}")
+  for j in range(CLUSTERS):
+    #print(f"{j}-{ordered[j][0]}",end=" ")
+    #print(f"{j}",end=" ")
+    vectors2.append(vectors[ordered[j][0]])
+  #print("")
+
+  MSG1("distance matrix"); T1=vtime()
   mdist = euclidean_distance_matrix(vectors2)
+  MSG3(f"{len(vectors2)}x{len(vectors2)} in {minsec(vtime()-T1)}")
+
+  MSG1(f"{SORT}"); T1=vtime()
   permutation,distance = solve_tsp_simulated_annealing(mdist) 
+  MSG3(f"{minsec(vtime()-T1)}")
+
   cindex = permutation
 
 # TODO: listing only if requested

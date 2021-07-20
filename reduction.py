@@ -9,9 +9,13 @@ def reduction_init(cache,prcpt,REDIM,REDIMSIZE,REDIMPATS):
   redim.model = None
   cached = [] # newly-cached list for perception vectors
 
+  # corrections for the none mode
+  if redim.name == "none":
+    redim.size = prcpt.vsize
+    redim.pats = 0
+  
   # redim not needed
   if cache.paths2 and not cache.paths1 and not cache.paths0: return redim
-  # none mode
   if redim.name == "none": return redim
 
   # trainable modes
@@ -33,7 +37,7 @@ def reduction_init(cache,prcpt,REDIM,REDIMSIZE,REDIMPATS):
     i2 = i + BATCHSIZE
     if i2 > end: i2 = end
     MSGC("c")
-    vectors = loadraws(cache.paths1all[i:i2],cache.sx1)
+    vectors = loadraws(cache.paths1all[i:i2],cache.sx1s)
     MSGP(j)
     all_vectors = np.concatenate((all_vectors,vectors),0)
     i += len(vectors)
@@ -48,7 +52,7 @@ def reduction_init(cache,prcpt,REDIM,REDIMSIZE,REDIMPATS):
     MSGC("l")
     images = loadresize(cache.paths0all[i:i2],prcpt.isize)
     MSGC("\bn")
-    vectors = transform(prcpt,images)
+    vectors = perceive(prcpt,images)
     if args.cache:
       saveraws(cache.paths0all[i:i2],cache.sx1,vectors)
       cached += cache.paths0all[i:i2]
@@ -79,3 +83,17 @@ def reduction_init(cache,prcpt,REDIM,REDIMSIZE,REDIMPATS):
 
   return redim
 
+# ------------------------------------------------------------------------------------
+
+def reduce(redim,vectors):
+
+  if redim.name == "none":
+    reduced = vectors
+    #reduced = vectors.reshape(redim.size,-1)
+
+  else:
+    reduced = redim.model.transform(vectors)
+
+  return reduced
+
+# ------------------------------------------------------------------------------------
