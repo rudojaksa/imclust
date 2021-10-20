@@ -6,16 +6,19 @@ import numpy as np
 np.warnings.filterwarnings("ignore",category=np.VisibleDeprecationWarning)
 
 # available vs. default perception models (to transform input picture into vector of numbers)
-MODELS = ("none","resnet50")
-MODEL = "resnet50"
+MODELS  = ("none","resnet50","resnet152v2","vgg16","inceptionv3","efficientnetb6")
+MODELS += ("densenet121","densenet169","densenet201")
+MODEL   = "densenet201"
 
 # available vs. default dimensionality reduction methods
 REDIMS = ("none","pca") # TODO: autoencoders
 REDIM = "pca"
 
 # available vs. default clustering methods
-CLUSTS = ("km","bkm")
+CLUSTS = ("km","bkm","kmd")
 CLUST = "km"
+CLUSTERS = 128 # default no. of clusters
+CMULT = 1.1 # min ratio of images to clusters (2 = in average 2 images per cluster)
 
 # available vs. default cluster-centers sorting methods
 SORTS = ("none","size","tsp")
@@ -93,12 +96,15 @@ NAME
     imclust - cluster images
 
 USAGE
-    imclust [OPTIONS] DIRECTORY...
+    imclust [OPTIONS] PATH...
 
 DESCRIPTION
-    Imclust does cluster images in the directory, and produces
-    a web visualization (or CSV-file output). Clustering is done
-    in six steps:
+    Imclust does cluster images from the directory, and produces
+    a CSV-file output (or web visualization).  It accepts also multiple
+    directories as input, direct image files, or CSV files where the
+    first column are paths to images, or combination of them.
+
+    Clustering is done in six steps:
 
        1. loading and resize of images,
        2. perception - transformation of images into vectors,
@@ -114,10 +120,12 @@ OPTIONS
       -v  Verbose.
       -f  Force recomputing all data, avoid cached.
     -csv  Write csv output instead of html.
- -o PATH  Output file name.
+ -o PATH  The base of the output file name.
   -j NUM  Number of threads for loading, dflt. {THREADS}.
-  -cache  Cache computed vectors for every picture (see -vec).
+     -nc  Don't cache computed vectors for every picture (also see -vec).
+ -cd DIR  Cache dir, implies -cache, if not specified inputs dir is used.
   -c NUM  Requested number of clusters.
+  -n NUM  Number of clustering attempts/restarts.
   -m NUM  Limit the max number of images to cluster.
  -mt NUM  Number of members threshold for the cluster to be accepted.
  -dt NUM  Absolute distance threshold from the center cluster, for
@@ -126,7 +134,7 @@ OPTIONS
   -b NUM  Batch size.
   -r NUM  Reduce vector dimensionality to NUM, dflt. auto from {REDIMSIZE}.
  -rp NUM  No. of patterns to train reduction, dflt. auto from {REDIMPATS}.
- -nn STR  Model name, dflt. {MODEL} (from {", ".join(MODELS)}).
+ -nn STR  Model name, dflt. {MODEL} ({", ".join(MODELS)}).
  -cl STR  Clustering algorithm, dflt. {CLUST} (from {", ".join(CLUSTS)}).
  -rd STR  Dimensionality reduction, dflt. {REDIM} (from {", ".join(REDIMS)}).
   -s STR  Sorting of cluster centers, dflt. {SORT} (from {", ".join(SORTS)}).
@@ -134,10 +142,19 @@ OPTIONS
           for "dir/f_12.jpg" we expect "dir/f_12.vgg" if STR is "vgg".
           Comma separated list of suffixes is allowed, to concatenate
           several vectors into single input for clustering.
+     -nm  No metric.
+    -jpg  Jpg input files only.
 
 CLUSTERING
       km  scikit KMeans
      bkm  scikit MiniBatchKMeans
+     kmd  scikit KMedoids
+
+EXAMPLES
+    Cluster directory dir according to both .align and .blend precomputed
+    raw vectors into 96 clusters as a best from 16 attempts, result write
+    into CSV file:
+    imclust -n 16 -c 96 -vec align,blend -csv -o dir-cl.csv dir
 
 VERSION
     imclust {VERSION} (c) R.Jaksa 2021
@@ -154,6 +171,7 @@ parser.add_argument("-dt","--distthr",type=int)
 parser.add_argument("-pt","--percthr",type=int)
 parser.add_argument("-o","--output",type=str)
 parser.add_argument("-j","--threads",type=int)
+parser.add_argument("-n","--attempts",type=int)
 
 parser.add_argument("-b","--batchsize",type=int)
 parser.add_argument("-r","--redimsize",type=int)
@@ -165,7 +183,11 @@ parser.add_argument("-s","--sort",type=str,default=SORT)
 parser.add_argument("-rd","--redim",type=str)
 
 parser.add_argument("-vec","--vectors",type=str)
-parser.add_argument("-cache","--cache",action="store_true")
+parser.add_argument("-nc","--nocache",action="store_true")
+parser.add_argument("-cd","--cachedir",type=str,default="")
+parser.add_argument("-nm","--nometric",action="store_true")
+parser.add_argument("-jpg","--jpgonly",action="store_true")
+
 parser.add_argument("paths",type=str,nargs='*')
 args = parser.parse_args()
 
@@ -175,6 +197,12 @@ if args.help:
 
 VERBOSE = 1 if args.verbose else 0
 if args.threads: THREADS = args.threads
+
+args.cache = 1
+if args.nocache == 1: args.cache = 0
+
+CACHEDIR = args.cachedir
+if args.cachedir != "": args.cache = 1
 
 if not args.nn in MODELS: MSGE(f"unknown perc. model {args.nn}")
 else: MODEL = args.nn
@@ -189,6 +217,29 @@ else: REDIM = args.redim
 
 if not args.sort in SORTS: MSGE(f"unknown sorting {args.sort}")
 else: SORT = args.sort
+
+# -------------------------------------------------------------------------- filenames
+
+if args.verbose:
+  MSG("reqeusted paths",f"{', '.join(args.paths)}")
+
+# output filename
+def outputname():
+  if args.output: output = args.output
+  else:		  output = f"{args.paths[0]}"
+
+  if CLUST != "none":   output += f".{CLUST}{CLUSTERS}"
+  if args.vectors:      output += f".{re.sub(',','-',args.vectors)}"
+  elif MODEL != "none": output += f".{MODEL}"
+  if REDIM != "none":   output += f"-{REDIM}{REDIMSIZE}"
+# if SORT  != "none":   output += f".{SORT}"
+
+  output = re.sub("\.csv$","",output)
+  output = re.sub("\.html?$","",output)
+  return output
+
+if args.clusters: CLUSTERS = args.clusters
+MSG("expected name",f"{outputname()}")
 
 # ------------------------------------------------------------------ get list of files
 from glob import glob
@@ -206,15 +257,21 @@ for name in args.paths:
       if os.path.exists(file): paths.append(file)
       else: poor.append(file)
 
-  # 2nd: explicit filenames
-  elif re.search("\.((png)|(jpg))$",name):
+  # 2nd: explicit jpg filenames
+  elif re.search("\.jpg$",name):
     if os.path.exists(name): paths.append(name)
     else: poor.append(name)
 
-  # 3rd: recursive directory search
+  # 3rd: explicit png filenames
+  elif not args.jpgonly and re.search("\.png$",name):
+    if os.path.exists(name): paths.append(name)
+    else: poor.append(name)
+
+  # 4th: recursive directory search
   elif os.path.isdir(name):
-    paths += glob(name+"/**/*.png",recursive=True)
     paths += glob(name+"/**/*.jpg",recursive=True)
+    if not args.jpgonly:
+      paths += glob(name+"/**/*.png",recursive=True)
 
   else: poor.append(name)
 
@@ -258,10 +315,10 @@ MSG("batch size",f"{BATCHSIZE} (aprox. {len(paths)/BATCHSIZE:.0f} batches)")
 # include "loading.py"
 
 if args.vectors:
-  cache,vsize = caching_prec(paths,args.vectors,REDIM,REDIMSIZE)
+  cache,vsize = caching_init_prec(paths,args.vectors,CACHEDIR,REDIM,REDIMSIZE)
   MODEL = "none"
 else:
-  cache = caching_init(paths,MODEL,REDIM,REDIMSIZE)
+  cache = caching_init(paths,MODEL,CACHEDIR,REDIM,REDIMSIZE)
 
 REDIMSIZE = min(REDIMSIZE,vsize) # further reduce REDIMSIZE if vector size is too small
   
@@ -278,32 +335,45 @@ for path in cache.paths0: paths.append(path)
 IMAGES = len(vectors)
 
 # ----------------------------------------------------------------------- cluster them
-from sklearn import cluster
 MSG1("clustering")
 
-CLUSTERS = 128
-if len(paths)<2048: CLUSTERS = int(len(paths)/16)
-if CLUSTERS<2:	    CLUSTERS = 2
-if args.clusters:   CLUSTERS = args.clusters
+maxcl = int(len(paths)/CMULT)				# max. allowed no. of clusters
+if len(paths)<2048: CLUSTERS = int(len(paths)/16)	# default for small no. of files
+if args.clusters:   CLUSTERS = args.clusters		# requested no. of clusters
+if CLUSTERS>maxcl:  CLUSTERS = maxcl			# limited by CMULT
+if CLUSTERS<2:	    CLUSTERS = 2			# at least two
 
 T0 = vtime()
 
+# K-means using squared distances
 if CLUST == "km":
+  from sklearn import cluster
   n_init = 10
   n_init = 2 if IMAGES>8000 else n_init
-  knn = cluster.KMeans(n_clusters=CLUSTERS,verbose=VERBOSE,n_init=n_init)
+  n_init = args.attempts if args.attempts else n_init
+  clust = cluster.KMeans(n_clusters=CLUSTERS,verbose=VERBOSE,n_init=n_init)
   MSG2(f"scikit KMeans {CLUSTERS} clusters in {n_init} attempts")
 
 if CLUST == "bkm":
+  from sklearn import cluster
   n_init = 2
   n_init = 10 if CLUSTERS<2001 else n_init
   n_init = 100 if CLUSTERS<101 else n_init
-  knn = cluster.MiniBatchKMeans(n_clusters=CLUSTERS,verbose=VERBOSE,n_init=n_init)
+  n_init = args.attempts if args.attempts else n_init
+  clust = cluster.MiniBatchKMeans(n_clusters=CLUSTERS,verbose=VERBOSE,n_init=n_init)
   MSG2(f"scikit MiniBatchKMeans {CLUSTERS} clusters in {n_init} attempts")
 
-dists = knn.fit_transform(vectors) # distances to all cluster centers
-idx = knn.predict(vectors)	  # indexes of corresponding clusters
-MSG3(f"in {minsec(vtime()-T0)}")
+# K-medoids using absolute distances
+if CLUST == "kmd":
+  from sklearn_extra import cluster
+  clust = cluster.KMedoids(n_clusters=CLUSTERS)
+  MSG2(f"scikit KMedoids {CLUSTERS} clusters")
+
+# clustering itself
+dists = clust.fit_transform(vectors) # distances to all cluster centers
+idx = clust.predict(vectors)	     # indexes of corresponding clusters
+inertia = clust.inertia_	     # method-specific distance of samples to centers
+MSG3(f"in {minsec(vtime()-T0)} inertia={inertia:.2f}")
 
 # distances to the closest cluster
 dist = [np.inf] * IMAGES
@@ -435,12 +505,8 @@ for jj in range(CLUSTERS):		# j = cluster index as from kmeans
     else: # html output
       section[j] += addimg(f"{paths[k]}",f"cluster{jj+1}",f"{pdist[k]:.0f}% {dist[k]:.0f}cm",bad)
 
-# output filename
-output = "clust"
-if args.output: output = args.output
-output = re.sub("\.csv$","",output)
-output = re.sub("\.html?$","",output)
 MSG1("write output")
+output = outputname()
 
 # save csv
 BODY = ""
@@ -464,4 +530,8 @@ else:
     fd.write(html)
 
 MSG3(output)
+# ------------------------------------------------------------------------------------
+# include "metric.py"
+metric()
+
 # ------------------------------------------------------------------------------------

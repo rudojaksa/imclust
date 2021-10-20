@@ -1,8 +1,18 @@
 
+BUGS
+
+ * -rd none, still calls pca in loading!
+
+INPUT
+
+ * CSV input
+
 CACHING
 
+ * external cache dir (instead of caching in the source dir)
+ * trained PCA weights caching
  * caching of clustered csv (PRIORITY)
- * automatic names for csv: resnet50-pca512-km128-tsp.csv (PRIORITY)
+ * write metric only after writting results
 
 VISUALIZATION
 

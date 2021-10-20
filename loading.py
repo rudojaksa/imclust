@@ -29,7 +29,7 @@ def data_load(cache,prcpt,redim):
     i2 = i + BATCHSIZE
     if i2 > end: i2 = end
     MSGC("C")
-    vectors = loadraws(cache.paths2[i:i2],cache.sx2)
+    vectors = loadraws(cache.paths2[i:i2],cache.sx2,cache.cdir)
     MSGP(j)
     all_vectors = np.concatenate((all_vectors,vectors),0)
     i += len(vectors)
@@ -42,11 +42,11 @@ def data_load(cache,prcpt,redim):
     i2 = i + BATCHSIZE
     if i2 > end: i2 = end
     MSGC("c")
-    vectors = loadraws(cache.paths1[i:i2],cache.sx1s)
+    vectors = loadraws(cache.paths1[i:i2],cache.sx1s,cache.cdir)
     MSGC("\br")
     vectors = reduce(redim,vectors)
     if args.cache:
-      saveraws(cache.paths1[i:i2],cache.sx2,vectors)
+      saveraws(cache.paths1[i:i2],cache.sx2,cache.cdir,vectors)
       cached2 += cache.paths1[i:i2]
     MSGP(j)
     all_vectors = np.concatenate((all_vectors,vectors),0)
@@ -65,12 +65,12 @@ def data_load(cache,prcpt,redim):
     MSGC("\bn")
     vectors = perceive(prcpt,images)
     if args.cache:
-      saveraws(cache.paths0[i:i2],cache.sx1,vectors)
+      saveraws(cache.paths0[i:i2],cache.sx1,cache.cdir,vectors)
       cached1 += cache.paths0[i:i2]
     MSGC("\br")
     vectors = reduce(redim,vectors)
     if args.cache:
-      saveraws(cache.paths0[i:i2],cache.sx2,vectors)
+      saveraws(cache.paths0[i:i2],cache.sx2,cache.cdir,vectors)
       cached2 += cache.paths0[i:i2]
     MSGP(j)
     all_vectors = np.concatenate((all_vectors,vectors),0)

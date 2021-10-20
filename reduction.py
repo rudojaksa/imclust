@@ -37,7 +37,7 @@ def reduction_init(cache,prcpt,REDIM,REDIMSIZE,REDIMPATS):
     i2 = i + BATCHSIZE
     if i2 > end: i2 = end
     MSGC("c")
-    vectors = loadraws(cache.paths1all[i:i2],cache.sx1s)
+    vectors = loadraws(cache.paths1all[i:i2],cache.sx1s,cache.cdir)
     MSGP(j)
     all_vectors = np.concatenate((all_vectors,vectors),0)
     i += len(vectors)
@@ -54,7 +54,7 @@ def reduction_init(cache,prcpt,REDIM,REDIMSIZE,REDIMPATS):
     MSGC("\bn")
     vectors = perceive(prcpt,images)
     if args.cache:
-      saveraws(cache.paths0all[i:i2],cache.sx1,vectors)
+      saveraws(cache.paths0all[i:i2],cache.sx1,cache.cdir,vectors)
       cached += cache.paths0all[i:i2]
     MSGP(j)
     all_vectors = np.concatenate((all_vectors,vectors),0)
