@@ -113,17 +113,25 @@ DESCRIPTION
        5. ordering/sorting of clusters,
        6. assembling the visualization or the output data-file.
 
-    Caching of perception and reduction outputs can be enabled.
+    Instead of perception/reduction vectors, precomputed vectors can
+    be used for clustering using the -vec switch.
+
+CACHING
+    Caching of perception and reduction outputs is enabled by default.
+    If in current directory or in any parent directory a "CACHE" directory
+    is find, it will be used.  Otherwise inputs directory will be used
+    for cache files.  Explicit cache directory can by requested by -cd,
+    or no caching by -nc.
 
 OPTIONS
       -h  This help.
       -v  Verbose.
       -f  Force recomputing all data, avoid cached.
-    -csv  Write csv output instead of html.
+   -html  Write html output instead of CSV.
  -o PATH  The base of the output file name.
   -j NUM  Number of threads for loading, dflt. {THREADS}.
-     -nc  Don't cache computed vectors for every picture (also see -vec).
- -cd DIR  Cache dir, implies -cache, if not specified inputs dir is used.
+ -cd DIR  Cache directory to use.
+     -nc  Don't cache computed perception nor reduction vectors.
   -c NUM  Requested number of clusters.
   -n NUM  Number of clustering attempts/restarts.
   -m NUM  Limit the max number of images to cluster.
@@ -151,10 +159,9 @@ CLUSTERING
      kmd  scikit KMedoids
 
 EXAMPLES
-    Cluster directory dir according to both .align and .blend precomputed
-    raw vectors into 96 clusters as a best from 16 attempts, result write
-    into CSV file:
-    imclust -n 16 -c 96 -vec align,blend -csv -o dir-cl.csv dir
+    Cluster directory dir according to both .model1 and .model2 precomputed
+    raw vectors into 96 clusters as a best from 16 attempts:
+    imclust -n 16 -c 96 -vec model1,model2 -o dir-cl.csv dir
 
 VERSION
     imclust {VERSION} (c) R.Jaksa 2021
@@ -164,7 +171,6 @@ import argparse
 parser = argparse.ArgumentParser(add_help=False)
 parser.add_argument("-h","--help",action="store_true")
 parser.add_argument("-v","--verbose",action="store_true")
-parser.add_argument("-csv","--csv",action="store_true")
 parser.add_argument("-c","--clusters",type=int)
 parser.add_argument("-m","--maximum",type=int)
 parser.add_argument("-dt","--distthr",type=int)
@@ -188,6 +194,8 @@ parser.add_argument("-cd","--cachedir",type=str,default="")
 parser.add_argument("-nm","--nometric",action="store_true")
 parser.add_argument("-jpg","--jpgonly",action="store_true")
 
+parser.add_argument("-html","--html",action="store_true")
+
 parser.add_argument("paths",type=str,nargs='*')
 args = parser.parse_args()
 
@@ -197,12 +205,6 @@ if args.help:
 
 VERBOSE = 1 if args.verbose else 0
 if args.threads: THREADS = args.threads
-
-args.cache = 1
-if args.nocache == 1: args.cache = 0
-
-CACHEDIR = args.cachedir
-if args.cachedir != "": args.cache = 1
 
 if not args.nn in MODELS: MSGE(f"unknown perc. model {args.nn}")
 else: MODEL = args.nn
@@ -309,16 +311,34 @@ if REDIMSIZE > REDIMPATS: REDIMSIZE = REDIMPATS
 
 MSG("batch size",f"{BATCHSIZE} (aprox. {len(paths)/BATCHSIZE:.0f} batches)")
 
+# -------------------------------------------------------------- cache directory setup
+
+args.cache = 1				# do cache by default
+if args.nocache == 1: args.cache = 0	# don't if requested
+
+# auto-find "CACHE" directory in parent dir, except we don't cache or dir is explicit
+if not args.nocache and args.cachedir == "":
+  dir = os.getcwd()
+  while dir!="" and not os.path.isdir(f"{dir}/CACHE"): dir = re.sub("/[^/]*$","",dir)
+  auto = f"{dir}/CACHE"
+  if os.path.isdir(auto):
+    args.cachedir = auto
+
+if args.cache:
+  if args.cachedir!="" and not os.path.isdir(args.cachedir): os.makedirs(args.cachedir)
+  dir = args.cachedir if args.cachedir!="" else "input dir"
+  MSG("will cache to",dir)
+
 # -------------------------------------- cached loading of images till reduced vectors
 # include "cache.py"
 # include "reduction.py"
 # include "loading.py"
 
 if args.vectors:
-  cache,vsize = caching_init_prec(paths,args.vectors,CACHEDIR,REDIM,REDIMSIZE)
+  cache,vsize = caching_init_prec(paths,args.vectors,args.cachedir,REDIM,REDIMSIZE)
   MODEL = "none"
 else:
-  cache = caching_init(paths,MODEL,CACHEDIR,REDIM,REDIMSIZE)
+  cache = caching_init(paths,MODEL,args.cachedir,REDIM,REDIMSIZE)
 
 REDIMSIZE = min(REDIMSIZE,vsize) # further reduce REDIMSIZE if vector size is too small
   
@@ -500,7 +520,7 @@ for jj in range(CLUSTERS):		# j = cluster index as from kmeans
   for i in range(len(ordered[j])):	# i = order in_the_cluster
     k = ordered[j][i]			# k = image_index
     bad = 1 if i>=above[j] else 0;
-    if args.csv: # csv output
+    if not args.html: # csv output
       section[j] += f"{paths[k]} {jj+1} {dist[k]:.1f} {pdist[k]:.1f} {bad}\n"
     else: # html output
       section[j] += addimg(f"{paths[k]}",f"cluster{jj+1}",f"{pdist[k]:.0f}% {dist[k]:.0f}cm",bad)
@@ -510,7 +530,7 @@ output = outputname()
 
 # save csv
 BODY = ""
-if args.csv:
+if not args.html:
   output = f"{output}.csv"
   for i in range(CLUSTERS):
     BODY += section[cindex[i]]

@@ -1,3 +1,4 @@
+import tensorflow as tf
 
 def  modelname(model): return model._name
 def  inputsize(model): return model._feed_input_shapes[0][1:]
@@ -41,23 +42,41 @@ def perception_init(cache,name,isize,osize,vsize):
   # tensorflow models start here
   MSG1("init perception")
   if not VERBOSE: os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-  import tensorflow as tf
 
+  # preproc: from RGB to BGR, each channel zero-centered according ImageNet, no scaling
   if name == "resnet50":
+    prcpt.prepr = tf.keras.applications.resnet50.preprocess_input
     prcpt.model = tf.keras.applications.resnet50.ResNet50(include_top=False,weights="imagenet",input_shape=(224,224,3))
+
+  # preproc: pixels scaled to -1..1 sample-wise
   if name == "resnet152v2":
+    prcpt.prepr = tf.keras.applications.resnet_v2.preprocess_input
     prcpt.model = tf.keras.applications.ResNet152V2(include_top=False,weights="imagenet",input_shape=(224,224,3))
+
+  # converted from RGB to BGR, each channel zero-centered according ImageNet, no scaling
   if name == "vgg16":
-    prcpt.model = tf.keras.applications.VGG16(include_top=False,weights="imagenet",input_shape=(224,224,3))
+    prcpt.prepr = tf.keras.applications.vgg16.preprocess_input
+    prcpt.model = tf.keras.applications.vgg16.VGG16(include_top=False,weights="imagenet",input_shape=(224,224,3))
+
+  # preproc: pixels scaled to -1..1 sample-wise
   if name == "inceptionv3":
+    prcpt.prepr = tf.keras.applications.inception_v3.preprocess_input
     prcpt.model = tf.keras.applications.inception_v3.InceptionV3(include_top=False,weights="imagenet",input_shape=(224,224,3)) 
+
+  # preproc: void, no preprocessing
   if name == "efficientnetb6":
+    prcpt.prepr = tf.keras.applications.efficientnet.preprocess_input
     prcpt.model = tf.keras.applications.efficientnet.EfficientNetB6(include_top=False,weights="imagenet",input_shape=(224,224,3))
+
+  # preproc: pixels scaled to 0..1 and each channel is normalized according ImageNet
   if name == "densenet121":
+    prcpt.prepr = tf.keras.applications.densenet.preprocess_input
     prcpt.model = tf.keras.applications.densenet.DenseNet121(include_top=False,weights="imagenet",input_shape=(224,224,3)) 
   if name == "densenet169":
+    prcpt.prepr = tf.keras.applications.densenet.preprocess_input
     prcpt.model = tf.keras.applications.densenet.DenseNet169(include_top=False,weights="imagenet",input_shape=(224,224,3))
   if name == "densenet201":
+    prcpt.prepr = tf.keras.applications.densenet.preprocess_input
     prcpt.model = tf.keras.applications.densenet.DenseNet201(include_top=False,weights="imagenet",input_shape=(224,224,3)) 
     
   prcpt.name = modelname(prcpt.model)
@@ -70,7 +89,7 @@ def perception_init(cache,name,isize,osize,vsize):
 # ------------------------------------------------------------------------------------
 
 def perceive(prcpt,images):
-  vectors = prcpt.model.predict(images)
+  vectors = prcpt.model.predict(prcpt.prepr(images))
   vectors = vectors.reshape(images.shape[0],-1)
   return vectors
 

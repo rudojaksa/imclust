@@ -19,17 +19,25 @@ Clustering is done in six steps:
    5. ordering/sorting of clusters,
    6. assembling the visualization or the output data-file.
 
-Caching of perception and reduction outputs can be enabled.
+Instead of perception/reduction vectors, precomputed vectors can
+be used for clustering using the -vec switch.
+
+### CACHING
+        Caching of perception and reduction outputs is enabled by default.
+        If in current directory or in any parent directory a "CACHE" directory
+        is find, it will be used.  Otherwise inputs directory will be used
+        for cache files.  Explicit cache directory can by requested by -cd,
+        or no caching by -nc.
 
 ### OPTIONS
           -h  This help.
           -v  Verbose.
           -f  Force recomputing all data, avoid cached.
-        -csv  Write csv output instead of html.
+       -html  Write html output instead of CSV.
      -o PATH  The base of the output file name.
       -j NUM  Number of threads for loading, dflt. 8.
-         -nc  Don't cache computed vectors for every picture (also see -vec).
-     -cd DIR  Cache dir, implies -cache, if not specified inputs dir is used.
+     -cd DIR  Cache directory to use.
+         -nc  Don't cache computed perception nor reduction vectors.
       -c NUM  Requested number of clusters.
       -n NUM  Number of clustering attempts/restarts.
       -m NUM  Limit the max number of images to cluster.
@@ -57,11 +65,10 @@ Caching of perception and reduction outputs can be enabled.
          kmd  scikit KMedoids
 
 ### EXAMPLES
-        Cluster directory dir according to both .align and .blend precomputed
-        raw vectors into 96 clusters as a best from 16 attempts, result write
-        into CSV file:
-        imclust -n 16 -c 96 -vec align,blend -csv -o dir-cl.csv dir
+        Cluster directory dir according to both .model1 and .model2 precomputed
+        raw vectors into 96 clusters as a best from 16 attempts:
+        imclust -n 16 -c 96 -vec model1,model2 -o dir-cl.csv dir
 
 ### VERSION
-imclust 0.4 (c) R.Jaksa 2021
+imclust 0.5 (c) R.Jaksa 2021
 

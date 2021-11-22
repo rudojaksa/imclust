@@ -1,10 +1,13 @@
-0.4 - added metrics
+0.5 - "CACHE" dir support
+    - fixed missing preprocessing (thanks to Marian)
+    - CSV output by default
+0.4 - added metrics and kmd (thanks to Andrej)
     - more NNs
     - automatic output name
     - caching by default
 0.3 - external cache
 0.2 - added vectors caching
-    - added clusters ordering by TSP
+    - added clusters ordering by TSP (thanks to Andrej)
 0.1  (based on the imclust.py demo)
     - added multithread load-resize to save memory
     - added clusters ordering by size

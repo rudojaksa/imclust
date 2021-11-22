@@ -1,2 +1,2 @@
-exclude: #*# imclust
+exclude: #*# imclust *.old *.bkp
 skipdir: UTIL

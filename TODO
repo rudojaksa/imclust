@@ -1,7 +1,13 @@
 
 BUGS
 
+ * add: img = tf.keras.applications.vgg16.preprocess_input(img) !!!
  * -rd none, still calls pca in loading!
+
+ANALYSE
+
+ * check the different PCA solvers (for speed)
+ * check the skCUDA (for fast PCA)
 
 INPUT
 
@@ -27,5 +33,6 @@ PARALLELIZATION
 
 EVAL
 
+ * metrics in user specified space (embeddings) !!!
  * histogram of clusters sizes
 
