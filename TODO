@@ -1,38 +1,27 @@
 
-BUGS
-
- * add: img = tf.keras.applications.vgg16.preprocess_input(img) !!!
- * -rd none, still calls pca in loading!
-
-ANALYSE
+PCA
 
  * check the different PCA solvers (for speed)
  * check the skCUDA (for fast PCA)
 
-INPUT
-
- * CSV input
-
 CACHING
 
- * external cache dir (instead of caching in the source dir)
+ * caching of clustered csv
  * trained PCA weights caching
- * caching of clustered csv (PRIORITY)
- * write metric only after writting results
-
-VISUALIZATION
-
- * remove html output, instead add impage and wrapper script for imclust->impage
- * add select button into every cluster in overview, to generate "copypaste" export list
- * add the "last" button into every image in cluster view, to mark the tail of images to be recycled
-
-PARALLELIZATION
-
- * the process needs to be separated into independent tools for perception,redim,etc. (BIG)
- * these have to be wrapped into parallelizing perl script!
 
 EVAL
 
  * metrics in user specified space (embeddings) !!!
  * histogram of clusters sizes
+
+PARALLELIZATION
+
+ * the process can be separated into independent tools for perception,redim,etc.
+ * these can be wrapped into short parallelizing (perl) script
+
+VISUALIZATION
+
+ * maybe remove html output, instead add impage and wrapper script for imclust->impage
+ * add select button into every cluster in overview, to generate "copypaste" export list
+ * add the "last" button into every image in cluster view, to mark the tail of images to be recycled
 
