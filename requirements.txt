@@ -1,0 +1,4 @@
+pip3 install scikit-image
+pip3 install python_tsp
+pip3 install validclust
+pip3 install s_dbw

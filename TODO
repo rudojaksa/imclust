@@ -1,13 +1,15 @@
+CACHING
+
+ * !!! CACHE should have flattened-subdir paths, to realy allow clustering from multiple directories
+   * to allow single clustering process with multiple dirs
+   * to allow multiple consequtive tasks from dirA dirB dirC without intermixing cached data!!!
+ * caching of clustered csv
+ * trained PCA weights caching
 
 PCA
 
  * check the different PCA solvers (for speed)
  * check the skCUDA (for fast PCA)
-
-CACHING
-
- * caching of clustered csv
- * trained PCA weights caching
 
 EVAL
 
