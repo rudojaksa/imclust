@@ -65,9 +65,26 @@ be used for clustering using the -vec switch.
          kmd  scikit KMedoids
 
 ### EXAMPLES
+    
+      imclust -c 128 -nn resnet50 -r 512 -n 128 images
+    
+        Cluster images from the images directory to 128 clusters using resnet50
+        embeddings reduced to 512 length with 128 runs of the algorithm.  Results
+        will be in the images directory itself in images/.km32.resnet50-pca294.csv.
+        Visulaize it by converting to html page with clusters, and open in browser:
+    
+      impage -tt images.km32.resnet50-pca152.csv
+      or
+      impage -tt -m images.km32.resnet50-pca152.csv
+      firefox /tmp/impage/images.km32.resnet50-pca152/index.html
+    
         Cluster directory dir according to both .model1 and .model2 precomputed
         raw vectors into 96 clusters as a best from 16 attempts:
-        imclust -n 16 -c 96 -vec model1,model2 -o dir-cl.csv dir
+    
+      imclust -n 16 -c 96 -vec model1,model2 -o dir-cl.csv dir
+
+### SEE ALSO
+impage -h
 
 ### VERSION
 imclust 0.5 (c) R.Jaksa 2021

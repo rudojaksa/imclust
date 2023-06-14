@@ -168,8 +168,10 @@ EXAMPLES
     will be in the images directory itself in images/.km32.resnet50-pca294.csv.
     Visulaize it by converting to html page with clusters, and open in browser:
 
-  impage -tt images/.km32.resnet50-pca294.csv
-  firefox /tmp/impage/.km32.resnet50-pca294/index.html
+  impage -tt images.km32.resnet50-pca152.csv
+  or
+  impage -tt -m images.km32.resnet50-pca152.csv
+  firefox /tmp/impage/images.km32.resnet50-pca152/index.html
 
     Cluster directory dir according to both .model1 and .model2 precomputed
     raw vectors into 96 clusters as a best from 16 attempts:
